@@ -1,0 +1,208 @@
+#include <Servo.h>
+
+Servo servoLeft;
+Servo servoRight;
+
+// ===============================
+// PINS
+// ===============================
+const int leftLedPin = 10;
+const int leftReceiverPin = 11;
+
+const int middleLedPin = 6;
+const int middleReceiverPin = 7;
+
+const int rightLedPin = 2;
+const int rightReceiverPin = 3;
+
+const int ledRight = A0;
+const int ledMid   = A1;
+const int ledLeft  = A2;
+
+// ===============================
+// MOVEMENT
+// ===============================
+const int SPEED = 100;
+const unsigned long MOVE_TIME = 375;   // about 5 cm
+
+// ===============================
+// SCENARIO
+// ===============================
+int goodReads = 0;
+bool finished = false;
+
+void setup()
+{
+  Serial.begin(9600);
+
+  servoLeft.attach(13);
+  servoRight.attach(12);
+
+  pinMode(leftLedPin, OUTPUT);
+  pinMode(leftReceiverPin, INPUT);
+
+  pinMode(middleLedPin, OUTPUT);
+  pinMode(middleReceiverPin, INPUT);
+
+  pinMode(rightLedPin, OUTPUT);
+  pinMode(rightReceiverPin, INPUT);
+
+  pinMode(ledRight, OUTPUT);
+  pinMode(ledMid, OUTPUT);
+  pinMode(ledLeft, OUTPUT);
+
+  stopRobot();
+
+  delay(1000);
+}
+
+void loop()
+{
+  if (finished)
+    return;
+
+  // Read sensors
+  int leftSeen   = irSeen(leftLedPin, leftReceiverPin);
+  int middleSeen = irSeen(middleLedPin, middleReceiverPin);
+  int rightSeen  = irSeen(rightLedPin, rightReceiverPin);
+
+  Serial.print("LEFT=");
+  Serial.print(leftSeen);
+
+  Serial.print("  MIDDLE=");
+  Serial.print(middleSeen);
+
+  Serial.print("  RIGHT=");
+  Serial.println(rightSeen);
+
+  // --------------------------------
+  // Corridor condition
+  //
+  // Left sees wall
+  // Right sees wall
+  // Middle sees clear space
+  // --------------------------------
+  bool leftWall   = leftSeen > 0;
+  bool rightWall  = rightSeen > 0;
+  bool frontClear = middleSeen <= 1;
+
+  if (leftWall && rightWall && frontClear)
+  {
+    goodReads++;
+
+    Serial.print("GOOD READ ");
+    Serial.println(goodReads);
+  }
+  else
+  {
+    goodReads = 0;
+    stopRobot();
+  }
+
+  // Need 3 good readings in a row
+  if (goodReads >= 3)
+  {
+    Serial.println("CORRIDOR FOUND!");
+    Serial.println("MOVING FORWARD 5 CM");
+
+    // A0 ON, A1 OFF, A2 OFF
+    digitalWrite(ledRight, HIGH);
+    digitalWrite(ledMid, LOW);
+    digitalWrite(ledLeft, LOW);
+
+    moveForward();
+
+    stopRobot();
+
+    // Stop permanently after completing movement
+    finished = true;
+
+    Serial.println("DONE");
+  }
+
+  delay(20);
+}
+
+// ===============================
+// MOVE FORWARD
+// ===============================
+void moveForward()
+{
+  unsigned long startTime = millis();
+
+  while (millis() - startTime < MOVE_TIME)
+  {
+    int leftSeen  = irSeen(leftLedPin, leftReceiverPin);
+    int rightSeen = irSeen(rightLedPin, rightReceiverPin);
+
+    // Simple centering correction
+    int steer = 0;
+
+    if (leftSeen > rightSeen)
+    {
+      // Too close to left wall
+      steer = 15;
+    }
+    else if (rightSeen > leftSeen)
+    {
+      // Too close to right wall
+      steer = -15;
+    }
+
+    servoLeft.writeMicroseconds(1500 + SPEED + steer);
+    servoRight.writeMicroseconds(1500 - SPEED + steer);
+  }
+}
+
+// ===============================
+// STOP
+// ===============================
+void stopRobot()
+{
+  servoLeft.writeMicroseconds(1500);
+  servoRight.writeMicroseconds(1500);
+}
+
+// ===============================
+// IR SENSOR
+// ===============================
+int irSeen(int ledPin, int receiverPin)
+{
+  int seen = 0;
+
+  for (long frequency = 38000;
+       frequency <= 42000;
+       frequency += 1000)
+  {
+    if (detectReliable(ledPin, receiverPin, frequency))
+    {
+      seen++;
+    }
+  }
+
+  return seen;
+}
+
+// ===============================
+// IR DETECTION
+// ===============================
+bool detectReliable(int ledPin, int receiverPin, long frequency)
+{
+  int hits = 0;
+
+  for (int i = 0; i < 3; i++)
+  {
+    tone(ledPin, frequency);
+    delay(1);
+
+    if (digitalRead(receiverPin) == LOW)
+    {
+      hits++;
+    }
+
+    noTone(ledPin);
+    delay(1);
+  }
+
+  return hits >= 2;
+}
