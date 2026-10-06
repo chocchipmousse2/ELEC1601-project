@@ -1,0 +1,289 @@
+
+#include <Servo.h>
+
+Servo servoLeft;
+Servo servoRight;
+
+// ==========================================
+// PINS
+// ==========================================
+const int leftLedPin = 10;
+const int leftReceiverPin = 11;
+
+const int middleLedPin = 6;
+const int middleReceiverPin = 7;
+
+const int rightLedPin = 2;
+const int rightReceiverPin = 3;
+
+const int ledRight = A0;   // LED-R Right
+const int ledMid   = A1;   // LED-R Mid
+const int ledLeft  = A2;   // LED-R Left
+
+// ==========================================
+// CALIBRATION SETTINGS (tune these on your robot)
+// ==========================================
+// true = robot never moves, just prints sensor distance zones to Serial Monitor
+const bool CALIBRATE_MODE = false;
+
+// Distance zones from irDistance(): 0 = very close ... 5 = nothing seen
+const int NO_WALL_ZONE = 5;
+const int SIDE_WALL_MAX_ZONE = 4;    // side zone <= this means a wall is there
+const int SIDE_MATCH_TOLERANCE = 1;  // left and right may differ by this many zones
+const int FRONT_CLEAR_MIN_ZONE = 4;  // front zone >= this means wall is >= 10 cm away (or no wall)
+
+// Movement
+const int BASE_SPEED = 100;          // microseconds away from 1500 (slower = more accurate)
+const float MS_PER_CM = 75.0;        // how long it takes to drive 1 cm at BASE_SPEED
+const int STEER_GAIN = 15;           // steering correction per zone of difference
+const float CORRIDOR_MOVE_CM = 5.0;
+
+// The same scenario must be seen this many times in a row before acting
+const int CONFIRM_READS = 3;
+
+// ==========================================
+// SCENARIOS
+// ==========================================
+enum Scenario
+{
+  SCENARIO_LOST,       // LEDs: OFF OFF OFF -> don't move
+  SCENARIO_CORRIDOR    // LEDs: Right ON, Mid OFF, Left OFF -> forward 5 cm, centered
+};
+
+Scenario lastScenario = SCENARIO_LOST;
+int sameCount = 0;
+bool finished = false;
+
+void setup()
+{
+  Serial.begin(9600);
+
+  servoLeft.attach(13);
+  servoRight.attach(12);
+
+  pinMode(leftLedPin, OUTPUT);
+  pinMode(leftReceiverPin, INPUT);
+  pinMode(middleLedPin, OUTPUT);
+  pinMode(middleReceiverPin, INPUT);
+  pinMode(rightLedPin, OUTPUT);
+  pinMode(rightReceiverPin, INPUT);
+
+  pinMode(ledRight, OUTPUT);
+  pinMode(ledMid, OUTPUT);
+  pinMode(ledLeft, OUTPUT);
+
+  setLeds(LOW, LOW, LOW);
+  stopRobot();
+  delay(1000);   // time to put the robot down
+}
+
+void loop()
+{
+  // Scenario done -> stay stopped until reset
+  if (finished)
+  {
+    return;
+  }
+
+  int left   = irDistance(leftLedPin, leftReceiverPin);
+  int middle = irDistance(middleLedPin, middleReceiverPin);
+  int right  = irDistance(rightLedPin, rightReceiverPin);
+
+  Serial.print("Left: ");
+  Serial.print(left);
+  Serial.print("  Middle: ");
+  Serial.print(middle);
+  Serial.print("  Right: ");
+  Serial.println(right);
+
+  if (CALIBRATE_MODE)
+  {
+    delay(200);
+    return;
+  }
+
+  // Only act once the same scenario is seen several times in a row
+  Scenario s = identifyScenario(left, middle, right);
+  if (s == lastScenario)
+  {
+    sameCount++;
+  }
+  else
+  {
+    lastScenario = s;
+    sameCount = 1;
+  }
+  if (sameCount < CONFIRM_READS)
+  {
+    return;
+  }
+
+  switch (s)
+  {
+    // ==========================================
+    // CORRIDOR: walls on both sides, front clear
+    // ==========================================
+    case SCENARIO_CORRIDOR:
+      Serial.println("SCENARIO: corridor -> forward 5 cm");
+      setLeds(HIGH, LOW, LOW);          // A0 ON, A1 OFF, A2 OFF
+      moveForwardCentered(CORRIDOR_MOVE_CM);
+      finish();
+      break;
+
+    // ==========================================
+    // LOST: doesn't match any known scenario
+    // ==========================================
+    case SCENARIO_LOST:
+    default:
+      Serial.println("SCENARIO: lost -> stop. Photograph position, then press reset.");
+      setLeds(LOW, LOW, LOW);           // A0 OFF, A1 OFF, A2 OFF
+      finish();
+      break;
+  }
+}
+
+
+// ==========================================
+// SCENARIO DETECTION
+// ==========================================
+Scenario identifyScenario(int left, int middle, int right)
+{
+  bool leftWall   = left  <= SIDE_WALL_MAX_ZONE;
+  bool rightWall  = right <= SIDE_WALL_MAX_ZONE;
+  bool sidesMatch = abs(left - right) <= SIDE_MATCH_TOLERANCE;
+  bool frontClear = middle >= FRONT_CLEAR_MIN_ZONE;
+
+  if (leftWall && rightWall && sidesMatch && frontClear)
+  {
+    return SCENARIO_CORRIDOR;
+  }
+
+  return SCENARIO_LOST;
+}
+
+
+// ==========================================
+// MOVE FORWARD WHILE STAYING CENTERED
+// Steers using the difference between left and right distances.
+// ==========================================
+void moveForwardCentered(float cm)
+{
+  unsigned long duration = (unsigned long)(cm * MS_PER_CM);
+  unsigned long start = millis();
+
+  while (millis() - start < duration)
+  {
+    int left  = irDistance(leftLedPin, leftReceiverPin);
+    int right = irDistance(rightLedPin, rightReceiverPin);
+
+    // error > 0 -> right wall is farther -> robot is too close to the left -> steer right
+    int error = right - left;
+
+    // If a wall disappears, don't steer toward the empty side
+    if (left >= NO_WALL_ZONE || right >= NO_WALL_ZONE)
+    {
+      error = 0;
+    }
+    error = constrain(error, -2, 2);
+
+    // Steer right = left wheel faster, right wheel slower (and vice versa)
+    int leftUs  = 1500 + BASE_SPEED + STEER_GAIN * error;
+    int rightUs = 1500 - BASE_SPEED + STEER_GAIN * error;
+
+    servoLeft.writeMicroseconds(leftUs);
+    servoRight.writeMicroseconds(rightUs);
+  }
+
+  stopRobot();
+}
+
+
+// ==========================================
+// FINISH: stop and lock the robot in place
+// ==========================================
+void finish()
+{
+  stopRobot();
+  delay(50);
+  servoLeft.detach();    // no pulses -> wheels can't creep
+  servoRight.detach();
+  finished = true;
+}
+
+
+// ==========================================
+// LEDS
+// ==========================================
+void setLeds(int rightState, int midState, int leftState)
+{
+  digitalWrite(ledRight, rightState);
+  digitalWrite(ledMid, midState);
+  digitalWrite(ledLeft, leftState);
+}
+
+
+// ==========================================
+// IR DISTANCE
+// Sweeps 38-42 kHz. The receiver is less sensitive away from 38 kHz,
+// so far objects only show up at 38 kHz while close ones show up at all of them.
+// Returns 0 (very close) to 5 (nothing seen).
+// ==========================================
+int irDistance(int irLedPin, int irReceiverPin)
+{
+  int distance = 0;
+  for (long f = 38000; f <= 42000; f += 1000)
+  {
+    distance += irDetect(irLedPin, irReceiverPin, f);
+  }
+  return distance;
+}
+
+
+// ==========================================
+// IR DETECTION
+// 0 = object detected
+// 1 = no object
+// ==========================================
+int irDetect(int irLedPin, int irReceiverPin, long frequency)
+{
+  tone(irLedPin, frequency);
+  delay(1);
+  int ir = digitalRead(irReceiverPin);
+  noTone(irLedPin);
+  delay(1);
+  return ir;
+}
+
+
+// ==========================================
+// MOTION CONTROL
+// ==========================================
+void forward()
+{
+  servoLeft.writeMicroseconds(1700);
+  servoRight.writeMicroseconds(1300);
+}
+
+void backward()
+{
+  servoLeft.writeMicroseconds(1300);
+  servoRight.writeMicroseconds(1700);
+}
+
+void turnRight()
+{
+  servoLeft.writeMicroseconds(1700);
+  servoRight.writeMicroseconds(1700);
+}
+
+void turnLeft()
+{
+  servoLeft.writeMicroseconds(1300);
+  servoRight.writeMicroseconds(1300);
+}
+
+void stopRobot()
+{
+  servoLeft.writeMicroseconds(1500);
+  servoRight.writeMicroseconds(1500);
+}
