@@ -1,0 +1,226 @@
+
+#include <Servo.h>
+
+Servo servoLeft;
+Servo servoRight;
+
+// IR sensor pins
+const int leftLedPin = 10;
+const int leftReceiverPin = 11;
+const int middleLedPin = 6;
+const int middleReceiverPin = 7;
+const int rightLedPin = 2;
+const int rightReceiverPin = 3;
+
+// Status LEDs
+const int ledRight = A0;
+const int ledMid = A1;
+const int ledLeft = A2;
+
+// ==========================================
+// SETTINGS TO TUNE
+// ==========================================
+// A sensor reading = how many of 38-42 kHz see a wall:
+// 0 = no wall (more than ~7 cm), 1 = ~7 cm, 2 = ~5 cm, 3 = ~4 cm, 4 = ~3 cm, 5 = under 2 cm
+
+const int SIDE_MIN = 1;    // side walls must be seen (closer than ~7 cm)
+const int SIDE_MAX = 5;    // lower this if you want to reject walls that are too close
+const int FRONT_MIN = 1;   // front wall closer than ~7 cm...
+const int FRONT_MAX = 4;   // ...but not closer than ~3 cm
+
+const int TURN_180_MS = 1020;           // time to rotate 180 degrees (2 x 572)
+const int FORWARD_AFTER_TURN_MS = 500;  // time to drive forward after turning (~8 cm, must be at least 5 cm)
+const int START_DELAY_MS = 5000;        // time to put the robot down
+
+bool done = false;
+
+void setup()
+{
+  Serial.begin(9600);
+
+  servoLeft.attach(13);
+  servoRight.attach(12);
+
+  pinMode(leftLedPin, OUTPUT);
+  pinMode(leftReceiverPin, INPUT);
+  pinMode(middleLedPin, OUTPUT);
+  pinMode(middleReceiverPin, INPUT);
+  pinMode(rightLedPin, OUTPUT);
+  pinMode(rightReceiverPin, INPUT);
+
+  pinMode(ledRight, OUTPUT);
+  pinMode(ledMid, OUTPUT);
+  pinMode(ledLeft, OUTPUT);
+
+  stopRobot();
+
+  // Blink all LEDs while you place the robot
+  unsigned long start = millis();
+  while (millis() - start < START_DELAY_MS)
+  {
+    int state = (millis() / 250) % 2;
+    setLeds(state, state, state);
+  }
+  setLeds(LOW, LOW, LOW);
+}
+
+void loop()
+{
+  if (done)
+  {
+    return;   // finished -> stay stopped until reset
+  }
+
+  int left  = irSeen(leftLedPin, leftReceiverPin);
+  int front = irSeen(middleLedPin, middleReceiverPin);
+  int right = irSeen(rightLedPin, rightReceiverPin);
+
+  Serial.print("Left: ");
+  Serial.print(left);
+  Serial.print("  Front: ");
+  Serial.print(front);
+  Serial.print("  Right: ");
+  Serial.println(right);
+
+  bool leftOk  = (left  >= SIDE_MIN  && left  <= SIDE_MAX);
+  bool rightOk = (right >= SIDE_MIN  && right <= SIDE_MAX);
+  bool frontOk = (front >= FRONT_MIN && front <= FRONT_MAX);
+
+  // ==========================================
+  // DEAD END: walls left, right and ahead -> turn around
+  // ==========================================
+  if (leftOk && rightOk && frontOk)
+  {
+    Serial.println(">> DEAD END: TURN 180");
+    setLeds(LOW, LOW, HIGH);          // A0 OFF, A1 OFF, A2 ON
+
+    stopRobot();
+    delay(200);
+
+    turnRight();
+    delay(TURN_180_MS);
+
+    stopRobot();
+    delay(200);
+
+    driveCentered(FORWARD_AFTER_TURN_MS);
+  }
+  else
+  {
+    // Not a dead end -> don't move, and say which check failed
+    Serial.println(">> NOT A DEAD END:");
+    if (left < SIDE_MIN)    Serial.println("   - left wall not seen");
+    if (left > SIDE_MAX)    Serial.println("   - left wall too close");
+    if (right < SIDE_MIN)   Serial.println("   - right wall not seen");
+    if (right > SIDE_MAX)   Serial.println("   - right wall too close");
+    if (front < FRONT_MIN)  Serial.println("   - front wall too far / not seen");
+    if (front > FRONT_MAX)  Serial.println("   - front wall too close");
+    setLeds(LOW, LOW, LOW);
+  }
+
+  // Stop after completion
+  stopRobot();
+  servoLeft.detach();
+  servoRight.detach();
+  done = true;
+}
+
+
+// ==========================================
+// DRIVE FORWARD FOR ms, STAYING CENTERED
+// Only steers when it can see BOTH walls.
+// ==========================================
+void driveCentered(unsigned long ms)
+{
+  unsigned long start = millis();
+
+  while (millis() - start < ms)
+  {
+    int left  = irSeen(leftLedPin, leftReceiverPin);
+    int right = irSeen(rightLedPin, rightReceiverPin);
+
+    if (left >= 1 && right >= 1 && left > right + 1)
+    {
+      // too close to left wall -> steer right
+      servoLeft.writeMicroseconds(1700);
+      servoRight.writeMicroseconds(1400);
+    }
+    else if (left >= 1 && right >= 1 && right > left + 1)
+    {
+      // too close to right wall -> steer left
+      servoLeft.writeMicroseconds(1600);
+      servoRight.writeMicroseconds(1300);
+    }
+    else
+    {
+      forward();
+    }
+  }
+
+  stopRobot();
+}
+
+
+// ==========================================
+// LEDS
+// ==========================================
+void setLeds(int rightState, int midState, int leftState)
+{
+  digitalWrite(ledRight, rightState);
+  digitalWrite(ledMid, midState);
+  digitalWrite(ledLeft, leftState);
+}
+
+
+// ==========================================
+// IR: how many of 38-42 kHz see a wall (0 = none, 5 = very close)
+// ==========================================
+int irSeen(int irLedPin, int irReceiverPin)
+{
+  int seen = 0;
+  for (long f = 38000; f <= 42000; f += 1000)
+  {
+    if (irDetect(irLedPin, irReceiverPin, f) == 0)
+    {
+      seen++;
+    }
+  }
+  return seen;
+}
+
+// 0 = object detected, 1 = no object (majority of 3 reads to filter noise)
+int irDetect(int irLedPin, int irReceiverPin, long frequency)
+{
+  int hits = 0;
+  for (int k = 0; k < 3; k++)
+  {
+    tone(irLedPin, frequency);
+    delay(1);
+    if (digitalRead(irReceiverPin) == 0) hits++;
+    noTone(irLedPin);
+    delay(1);
+  }
+  return (hits >= 2) ? 0 : 1;
+}
+
+
+// ==========================================
+// MOTION
+// ==========================================
+void forward()
+{
+  servoLeft.writeMicroseconds(1700);
+  servoRight.writeMicroseconds(1300);
+}
+
+void turnRight()
+{
+  servoLeft.writeMicroseconds(1700);
+  servoRight.writeMicroseconds(1700);
+}
+
+void stopRobot()
+{
+  servoLeft.writeMicroseconds(1500);
+  servoRight.writeMicroseconds(1500);
+}
