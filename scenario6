@@ -1,10 +1,13 @@
 
-// Scenario 6: right sensor much closer to the wall than the right -> re-center
+// Scenario 6: Right sensor much closer to the wall than the left -> re-center
 
 #include <Servo.h>
 
 Servo servoLeft;
 Servo servoRight;
+
+int speed = 500;       // driving speed: 200 = slow ... 500 = full speed
+int turnSpeed = 150;   // turning speed: slower = more consistent turns
 
 void setup()
 {
@@ -22,21 +25,23 @@ void loop()
   int front = irDistance(6, 7);
   int right = irDistance(2, 3);
 
-  if (left >= 1 && right >= 1 && left - right >= 1 && front <= 1)
+  // left can read 0 (left wall out of range), front can read up to 3 (it picks up the nearby right wall)
+  // right - left >= 2 because our right sensor reads about 1 higher even when we're centered
+  if (right >= 1 && right - left >= 2 && front <= 3)
   {
     digitalWrite(A1, HIGH);
     digitalWrite(A2, HIGH);
-    turnLeft();          // 1. rotate anticlockwise slightly
+    turnLeft();          // 1. rotate anticlockwise slightly (away from the right wall)
     delay(300);
     stopRobot();
     delay(300);
-    forward();           // 2. move forward
+    forward();           // 2. move forward (toward the center)
     delay(300);
     stopRobot();
     delay(300);
     int startRight = irDistance(2, 3);
     turnRight();         // 3. rotate clockwise back to parallel
-    for (int i = 0; i < 30; i++)          // check about every 10 ms (max ~0.3 s)
+    for (int i = 0; i < 50; i++)          // check about every 10 ms (max ~0.5 s)
     {
       if (irDistance(2, 3) > startRight)  // right sensor picks up its wall = parallel
       {
@@ -75,37 +80,40 @@ void forward()
 {
   servoLeft.attach(13);
   servoRight.attach(12);
-  servoLeft.writeMicroseconds(1700);
-  servoRight.writeMicroseconds(1300);
+  servoLeft.writeMicroseconds(1500 + speed);
+  servoRight.writeMicroseconds(1500 - speed);
 }
 
 void backward()
 {
   servoLeft.attach(13);
   servoRight.attach(12);
-  servoLeft.writeMicroseconds(1300);
-  servoRight.writeMicroseconds(1700);
+  servoLeft.writeMicroseconds(1500 - speed);
+  servoRight.writeMicroseconds(1500 + speed);
 }
 
 void turnRight()   // clockwise
 {
   servoLeft.attach(13);
   servoRight.attach(12);
-  servoLeft.writeMicroseconds(1700);
-  servoRight.writeMicroseconds(1700);
+  servoLeft.writeMicroseconds(1500 + turnSpeed);
+  servoRight.writeMicroseconds(1500 + turnSpeed);
 }
 
 void turnLeft()    // anticlockwise
 {
   servoLeft.attach(13);
   servoRight.attach(12);
-  servoLeft.writeMicroseconds(1300);
-  servoRight.writeMicroseconds(1300);
+  servoLeft.writeMicroseconds(1500 - turnSpeed);
+  servoRight.writeMicroseconds(1500 - turnSpeed);
 }
 
-// cut the signal to the servos so the wheels stop completely
+// brake the wheels, then cut the signal so they stay stopped
 void stopRobot()
 {
+  servoLeft.writeMicroseconds(1500);    // 1500 = stop (brakes the wheels)
+  servoRight.writeMicroseconds(1500);
+  delay(100);
   servoLeft.detach();
   servoRight.detach();
 }
