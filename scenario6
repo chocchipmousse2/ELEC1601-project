@@ -1,5 +1,5 @@
 
-// Scenario 6: Left sensor much closer to the wall than the right -> re-center
+// Scenario 6: right sensor much closer to the wall than the right -> re-center
 
 #include <Servo.h>
 
