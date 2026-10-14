@@ -1,0 +1,138 @@
+
+// Angled ~30 degrees toward the RIGHT wall -> straighten up, then move to the center
+
+#include <Servo.h>
+
+Servo servoLeft;
+Servo servoRight;
+
+int speed = 500;       // driving speed: 200 = slow ... 500 = full speed
+int turnSpeed = 150;   // turning speed: slower = more consistent turns
+
+void setup()
+{
+  pinMode(A0, OUTPUT);   // right LED
+  pinMode(A1, OUTPUT);   // middle LED
+  pinMode(A2, OUTPUT);   // left LED
+  stopRobot();
+  delay(3000);           // time to put the robot down
+}
+
+void loop()
+{
+  // read sensors (IR LED pin, receiver pin): 0 = no wall ... 5 = very close
+  int left = irDistance(10, 11);
+  int front = irDistance(6, 7);
+  int right = irDistance(2, 3);
+
+  // right wall closer than the left, a wall in front, and the left still sees a wall
+  // (right > left + 1 because our right sensor reads about 1 higher at the same distance)
+  if (right >= 2 && front >= 1 && left >= 1 && right > left + 1)
+  {
+    for (int i = 0; i < 2; i++)           // flash A0 twice, 1 second
+    {
+      digitalWrite(A0, HIGH);
+      delay(1000);
+      digitalWrite(A0, LOW);
+      delay(1000);
+    }
+
+    // PART 1: straighten up (we are angled about 30 degrees toward the right wall)
+    turnLeft();                           // rotate anticlockwise
+    for (int i = 0; i < 50; i++)          // check about every 10 ms (max ~0.5 s)
+    {
+      if (irDistance(10, 11) > left)      // left sensor picks up its wall = parallel
+      {
+        break;
+      }
+    }
+    stopRobot();
+    delay(300);
+
+    // PART 2: move away from the right wall to the center
+    turnLeft();          // 1. rotate anticlockwise slightly (away from the right wall)
+    delay(300);
+    stopRobot();
+    delay(300);
+    forward();           // 2. move forward (toward the center)
+    delay(300);
+    stopRobot();
+    delay(300);
+    int startRight = irDistance(2, 3);
+    turnRight();         // 3. rotate clockwise back to parallel
+    for (int i = 0; i < 50; i++)          // check about every 10 ms (max ~0.5 s)
+    {
+      if (irDistance(2, 3) > startRight)  // right sensor picks up its wall = parallel
+      {
+        break;
+      }
+    }
+    stopRobot();
+    delay(300);
+    backward();          // 4. reverse to be level with the start
+    delay(210);
+
+    stopRobot();
+    while (true) { }     // finished, stay here forever
+  }
+}
+
+// counts how many of 38-42 kHz see a wall (close walls are seen at all 5)
+int irDistance(int irLedPin, int receiverPin)
+{
+  int count = 0;
+  for (long f = 38000; f <= 42000; f = f + 1000)
+  {
+    tone(irLedPin, f);
+    delay(1);
+    if (digitalRead(receiverPin) == 0)   // 0 = saw something
+    {
+      count = count + 1;
+    }
+    noTone(irLedPin);
+    delay(1);
+  }
+  return count;
+}
+
+void forward()
+{
+  servoLeft.attach(13);
+  servoRight.attach(12);
+  servoLeft.writeMicroseconds(1500 + speed);
+  servoRight.writeMicroseconds(1500 - speed);
+}
+
+void backward()
+{
+  servoLeft.attach(13);
+  servoRight.attach(12);
+  servoLeft.writeMicroseconds(1500 - speed);
+  servoRight.writeMicroseconds(1500 + speed);
+}
+
+void turnRight()   // clockwise
+{
+  servoLeft.attach(13);
+  servoRight.attach(12);
+  servoLeft.writeMicroseconds(1500 + turnSpeed);
+  servoRight.writeMicroseconds(1500 + turnSpeed);
+}
+
+void turnLeft()    // anticlockwise
+{
+  servoLeft.attach(13);
+  servoRight.attach(12);
+  servoLeft.writeMicroseconds(1500 - turnSpeed);
+  servoRight.writeMicroseconds(1500 - turnSpeed);
+}
+
+// brake the wheels, then cut the signal so they stay stopped
+void stopRobot()
+{
+  servoLeft.writeMicroseconds(1500);    // 1500 = stop (brakes the wheels)
+  servoRight.writeMicroseconds(1500);
+  delay(100);
+  servoLeft.detach();
+  servoRight.detach();
+}
