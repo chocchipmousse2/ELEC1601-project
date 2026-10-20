@@ -8,7 +8,7 @@ Servo servoRight;
 
 int speed = 500;       // driving speed: 200 = slow ... 500 = full speed
 int turnSpeed = 150;   // turning speed: slower = more consistent turns
-int smallTurn = 80;    // how long the small turn away from the wall lasts (ms)
+int smallTurn = 120;   // how long the small turn away from the wall lasts (ms)
 
 void setup()
 {
