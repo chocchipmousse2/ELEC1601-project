@@ -8,6 +8,7 @@ Servo servoRight;
 
 int speed = 500;       // driving speed: 200 = slow ... 500 = full speed
 int turnSpeed = 150;   // turning speed: slower = more consistent turns
+int smallTurn = 80;    // how long the small turn away from the wall lasts (ms)
 
 void setup()
 {
@@ -32,7 +33,7 @@ void loop()
     digitalWrite(A0, HIGH);
     digitalWrite(A2, HIGH);
     turnRight();         // 1. rotate clockwise slightly (away from the left wall)
-    delay(300);
+    delay(smallTurn);
     stopRobot();
     delay(300);
     forward();           // 2. move forward (toward the center)
@@ -41,7 +42,7 @@ void loop()
     delay(300);
     int startLeft = irDistance(10, 11);
     turnLeft();          // 3. rotate anticlockwise back to parallel
-    for (int i = 0; i < 50; i++)          // check about every 10 ms (max ~0.5 s)
+    for (int i = 0; i < smallTurn / 10; i++)   // check about every 10 ms, never turn back more than we turned
     {
       if (irDistance(10, 11) > startLeft) // left sensor picks up its wall = parallel
       {
